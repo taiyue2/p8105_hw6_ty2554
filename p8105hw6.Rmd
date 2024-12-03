@@ -1,0 +1,81 @@
+---
+title: "Untitled"
+author: "Tai Yue"
+date: "2024-11-30"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+1.
+
+
+
+
+```{r}
+
+
+library(dplyr)
+library(ggplot2)
+library(broom)
+
+
+set.seed(123) 
+n <- 365 
+weather_df <- data.frame(
+  date = seq(as.Date("2017-01-01"), as.Date("2017-12-31"), by = "day"),
+  tmin = runif(n, -10, 15),  
+  tmax = runif(n, 0, 25),  
+  name = "CentralPark_NY",
+  id = "USW00094728"
+)
+
+
+set.seed(123) 
+n_bootstrap <- 5000
+bootstrap_results <- replicate(n_bootstrap, {
+  
+  sample_data <- weather_df %>% sample_frac(size = 1, replace = TRUE)
+  
+  
+  fit <- lm(tmax ~ tmin, data = sample_data)
+  
+  
+  r_squared <- glance(fit)$r.squared
+  
+  
+  coefs <- coef(fit)
+  log_beta <- ifelse(coefs[1] > 0 & coefs[2] > 0, log(coefs[1] * coefs[2]), NA)
+  
+  c(r_squared, log_beta)
+}, simplify = TRUE)
+
+
+bootstrap_df <- as.data.frame(t(bootstrap_results))
+colnames(bootstrap_df) <- c("r_squared", "log_beta")
+
+bootstrap_df <- bootstrap_df %>% filter(!is.na(log_beta))
+
+ci_r_squared <- quantile(bootstrap_df$r_squared, probs = c(0.025, 0.975), na.rm = TRUE)
+ci_log_beta <- quantile(bootstrap_df$log_beta, probs = c(0.025, 0.975), na.rm = TRUE)
+
+ggplot(bootstrap_df, aes(x = r_squared)) +
+  geom_histogram(binwidth = 0.01, color = "black", fill = "blue") +
+  labs(title = "Bootstrap Distribution of R-squared", x = "R-squared", y = "Frequency")
+
+ggplot(bootstrap_df, aes(x = log_beta)) +
+  geom_histogram(binwidth = 0.1, color = "black", fill = "blue") +
+  labs(title = "Bootstrap Distribution of log(beta_0 * beta_1)", x = "log(beta_0 * beta_1)", y = "Frequency")
+
+print(ci_r_squared)
+print(ci_log_beta)
+
+
+```
+2.
+```{r}
+
+```
+
