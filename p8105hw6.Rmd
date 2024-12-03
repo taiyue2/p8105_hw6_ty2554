@@ -77,5 +77,222 @@ print(ci_log_beta)
 2.
 ```{r}
 
+
+
+homicide_data <- read.csv("homicide-data.csv", stringsAsFactors = FALSE, fileEncoding = "latin1")
+
+
+homicide_data <- homicide_data %>%
+  mutate(city_state = paste(city, state, sep = ", "))
+
+
+homicide_data <- homicide_data %>%
+  mutate(is_solved = ifelse(grepl("Closed by arrest", disposition), 1, 0))
+
+homicide_data_filtered <- homicide_data %>%
+  filter(
+    !(city_state %in% c("Dallas, TX", "Phoenix, AZ", "Kansas City, MO", "Tulsa, AL")),
+    victim_race %in% c("White", "Black")
+  )
+
+homicide_data_filtered <- homicide_data_filtered %>%
+  mutate(victim_age = as.numeric(victim_age)) %>%
+  filter(!is.na(victim_age)) # Remove rows where victim_age is not numeric
+
+head(homicide_data_filtered)
+
+```
+```{r}
+
+baltimore_data <- homicide_data_filtered %>%
+  filter(city_state == "Baltimore, MD")
+
+glm_model <- glm(is_solved ~ victim_age + victim_sex + victim_race, 
+                 data = baltimore_data, 
+                 family = binomial(link = "logit"))
+
+model_summary <- broom::tidy(glm_model, conf.int = TRUE, exponentiate = TRUE)
+
+male_vs_female_odds <- model_summary %>%
+  filter(term == "victim_sexMale") %>%
+  select(term, estimate, conf.low, conf.high)
+
+print(male_vs_female_odds)
+
+```
+```{r}
+
+
+
+library(purrr)
+
+library(tidyr)
+
+
+results <- homicide_data_filtered %>%
+  group_by(city_state) %>%
+  nest() %>% 
+  mutate(
+    glm_model = map(data, ~ glm(is_solved ~ victim_age + victim_sex + victim_race, 
+                                data = ., family = binomial(link = "logit"))),
+    tidy_model = map(glm_model, ~ tidy(., conf.int = TRUE, exponentiate = TRUE))
+  ) %>%
+  select(city_state, tidy_model) %>% 
+  unnest(tidy_model) %>% 
+  filter(term == "victim_sexMale") %>% 
+  select(city_state, term, estimate, conf.low, conf.high)
+
+print(results)
+
+
+
+```
+
+```{r}
+library(ggplot2)
+
+results <- results %>%
+  arrange(estimate) %>%
+  mutate(city_state = factor(city_state, levels = city_state)) 
+
+
+ggplot(results, aes(x = city_state, y = estimate)) +
+  geom_point() + 
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.2) + 
+  coord_flip() + 
+  labs(
+    title = "Adjusted Odds Ratios for Solving Homicides by City",
+    x = "City",
+    y = "Adjusted Odds Ratio (Male vs Female Victims)"
+  ) +
+  theme_minimal() +
+  theme(axis.text.y = element_text(size = 8)) 
+```
+
+The plot displays the ORs and confidence intervals (CIs) for solving homicides comparing male to female victims across different cities. Cities are ordered by their estimated ORs, highlighting variation in gender-based resolution likelihood. The inclusion of confidence intervals provides insight into the statistical uncertainty for each city. Notably, some cities show ORs closer to 1, while others deviate significantly, suggesting potential variability in how gender affects case resolution.
+
+3.
+```{r}
+
+library(tidyr)
+
+birthweight <- read.csv("birthweight.csv")
+
+
+birthweight <- birthweight %>%
+  mutate(
+    babysex = as.factor(babysex),      
+    frace = as.factor(frace),          
+    mrace = as.factor(mrace),          
+    malform = as.factor(malform)       
+  )
+
+missing_data <- colSums(is.na(birthweight))
+print(missing_data)
+
+birthweight <- birthweight %>%
+  drop_na()
+
+summary(birthweight)
+
+write.csv(birthweight, "cleaned_birthweight.csv", row.names = FALSE)
+
+birthweight <- birthweight %>%
+  mutate(
+    ppbmi = scale(ppbmi),
+    delwt = scale(delwt),
+    fincome = scale(fincome),
+    wtgain = scale(wtgain),
+    smoken = scale(smoken)
+  )
+
+```
+
+Proposed Model: bwt=β0+β1(gestational_age)+β2(delivery_weight)+β3(smoking_habits)+β4(family_income)+β5(baby_sex)+ε
+
+Frst, include gestational age , maternal delivery weight, smoking habits, family income, and baby's sex based on domain knowledge. Then, fit the model using linear regression. Finally, evaluate model fit by plotting residuals against fitted values.
+```{r}
+
+library(modelr)
+
+
+birthweight_model <- lm(bwt ~ gaweeks + delwt + smoken + fincome + babysex, data = birthweight)
+
+
+birthweight <- birthweight %>%
+  add_predictions(birthweight_model, var = "predicted_bwt") %>%
+  add_residuals(birthweight_model, var = "residuals_bwt")
+
+
+ggplot(birthweight, aes(x = predicted_bwt, y = residuals_bwt)) +
+  geom_point(alpha = 0.5) +
+  geom_hline(yintercept = 0, color = "red", linetype = "dashed") +
+  labs(
+    title = "Residuals vs Fitted Values",
+    x = "Fitted Values (Predicted Birthweight)",
+    y = "Residuals"
+  ) +
+  theme_minimal()
+
+```
+
+
+
+
+```{r}
+
+library(purrr)
+
+
+birthweight_clean <- birthweight %>%
+  drop_na() 
+set.seed(123)
+cv_splits <- crossv_mc(birthweight_clean, 100) 
+
+
+calculate_rmse <- function(formula, train_data, test_data) {
+  
+  train <- as.data.frame(train_data)
+  test <- as.data.frame(test_data)
+  
+  
+  model <- lm(formula, data = train)
+  
+  
+  if (!"bwt" %in% colnames(test)) {
+    stop("Dependent variable 'bwt' is missing in test data")
+  }
+  
+  
+  predictions <- predict(model, newdata = test)
+  sqrt(mean((test$bwt - predictions)^2, na.rm = TRUE))
+}
+
+
+formulas <- list(
+  "Proposed Model" = bwt ~ babysex + gaweeks + mheight + momage + delwt + wtgain + smoken + fincome,
+  "Model 2" = bwt ~ blength + gaweeks,
+  "Model 3" = bwt ~ bhead * blength * babysex
+)
+
+
+cv_results <- cv_splits %>%
+  mutate(
+    rmse_proposed = map2_dbl(train, test, ~ calculate_rmse(formulas[["Proposed Model"]], .x, .y)),
+    rmse_model2 = map2_dbl(train, test, ~ calculate_rmse(formulas[["Model 2"]], .x, .y)),
+    rmse_model3 = map2_dbl(train, test, ~ calculate_rmse(formulas[["Model 3"]], .x, .y))
+  )
+
+
+rmse_summary <- cv_results %>%
+  summarize(
+    Proposed_Model = mean(rmse_proposed, na.rm = TRUE),
+    Model_2 = mean(rmse_model2, na.rm = TRUE),
+    Model_3 = mean(rmse_model3, na.rm = TRUE)
+  )
+
+print(rmse_summary)
+
+
 ```
 
